@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>EF-7 Terminal · Edenfall</title>
+<style>
+/* ── 终端样式（现代终端：白字黑底，无 CRT 特效） ── */
+:root{
+  --bg:#000;
+  --fg:#e0e0e0;
+  --dim:#808080;
+  --warn:#e5c07b;
+  --err:#e06c75;
+  --hi:#ffffff;
+  --mono:'Courier New','Consolas','Monaco',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;height:100%;
+  background:#000;
+  color:var(--fg);
+  font-family:var(--mono);
+  font-size:14px;
+  line-height:1.45;
+  overflow:hidden;
+  cursor:text;
+}
+/* CRT 扫描线 + 屏幕轻微抖动 */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0) 2px,
+      rgba(0,0,0,0.18) 3px,
+      rgba(0,0,0,0) 4px
+    );
+  z-index:999;
+}
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%);
+  z-index:998;
+}
+/* 屏幕轻微抖动 */
+@keyframes jitter{0%{transform:translate(0,0)}25%{transform:translate(-1px,0.5px)}50%{transform:translate(0.5px,-1px)}75%{transform:translate(-0.5px,1px)}100%{transform:translate(0,0)}}
+.crt-screen{ animation:jitter 0.12s steps(2,end) infinite; }
+
+#screen{
+  width:100%;height:100%;
+  padding:18px 22px;
+  overflow-y:auto;
+  white-space:pre-wrap;
+  word-break:break-all;
+  scrollbar-width:thin;
+  scrollbar-color:var(--dim) transparent;
+}
+#screen::-webkit-scrollbar{width:6px}
+#screen::-webkit-scrollbar-thumb{background:var(--dim)}
+
+.line{margin:0;padding:0;min-height:1em}
+.prompt{color:var(--fg)}
+.prompt::before{content:'E:\\ARG> '}
+.dim{color:var(--dim)}
+.warn{color:var(--warn)}
+.err{color:var(--err)}
+.hi{color:var(--hi)}
+.flash{color:#fff;background:#fff}
+.invert{background:var(--fg);color:#000}
+.bell::before{content:'\0007';color:var(--warn)}
+
+/* 闪烁下划线（输入光标） */
+#cursor{
+  display:inline-block;
+  width:0.6em;height:1em;
+  background:var(--fg);
+  vertical-align:text-bottom;
+  animation:blink 1s steps(2,end) infinite;
+}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+input.cmd{
+  position:fixed;
+  left:-9999px;top:-9999px;
+  opacity:0;
+}
+
+/* 隐藏其他元素 */
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="crt-screen">
+<div id="screen"></div>
+</div>
+<input class="cmd" id="cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" autofocus>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   EF-7 TERMINAL · EDENFALL
+   伪终端 + 第一章最小可玩版
+   ════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ─── DOM ─── */
+var screen = document.getElementById('screen');
+var cmd    = document.getElementById('cmd');
+
+/* ─── 工具 ─── */
+function print(html, cls){
+  var line = document.createElement('span');
+  line.className = 'line' + (cls ? ' '+cls : '');
+  if (html === undefined) html = '';
+  line.innerHTML = html;
+  screen.appendChild(line);
+}
+function println(html, cls){
+  print(html, cls);
+  screen.appendChild(document.createElement('br'));
+}
+function blank(){ screen.appendChild(document.createElement('br')); }
+function scroll(){
+  screen.scrollTop = screen.scrollHeight;
+  cmd.focus();
+}
+async function sleep(ms){ return new Promise(function(r){setTimeout(r,ms);}); }
+
+/* SHA-256 (用于答案验证，不泄露明文) */
+async function sha256(str){
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+function b64enc(s){ return btoa(unescape(encodeURIComponent(s))); }
+function b64dec(s){
+  try{
+    return decodeURIComponent(escape(atob(s)));
+  } catch(e){
+    return null;
+  }
+}
+function hexToBytes(h){
+  var out=[]; for(var i=0;i<h.length;i+=2) out.push(parseInt(h.substr(i,2),16));
+  return new Uint8Array(out);
+}
+function bytesToB64(u8){ var s=''; for(var i=0;i<u8.length;i++) s+=String.fromCharCode(u8[i]); return btoa(s); }
+function strToBytes(s){ return new TextEncoder().encode(s); }
+function bytesToStr(u8){ return new TextDecoder().decode(u8); }
+
+/* Vigenère（同时加密字母和数字；符号/小数点/逗号保留原文） */
+function vigenere(text, key, decode){
+  var out='', k=0;
+  for(var i=0;i<text.length;i++){
+    var ch = text[i];
+    var c  = text.charCodeAt(i);
+    if(/[A-Za-z]/.test(ch)){
+      var base = c<97 ? 65 : 97;
+      var kc = key.charCodeAt(k%key.length);
+      var shift = (kc<97 ? kc-65 : kc-97);
+      if(decode) shift = -shift;
+      out += String.fromCharCode((c-base-shift+520)%26+base);
+      k++;
+    } else if(/[0-9]/.test(ch)){
+      var kc = key.charCodeAt(k%key.length);
+      var shift = (kc<97 ? kc-65 : kc-97);
+      if(decode) shift = -shift;
+      out += String.fromCharCode(((c-48-shift)%10+10)%10+48);
+      k++;
+    } else {
+      out += ch; // 小数点、逗号、负号、空格等保留
+    }
+  }
+  return out;
+}
+
+/* AES-256-CBC（Web Crypto API） */
+async function aesKeyFromPassword(password){
+  var mat = await crypto.subtle.importKey('raw', strToBytes(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt:strToBytes('EFSEVENFALL_SALT_2019'), iterations:12000, hash:'SHA-256' },
+    mat,
+    { name:'AES-CBC', length:256 },
+    false, ['encrypt','decrypt']
+  );
+}
+async function aesDecrypt(password, b64cipher){
+  var u8 = hexToBytes(b64cipher.substr(0,32));     // IV 16 bytes
+  var ct = new Uint8Array(atob(b64cipher.substr(32)).split('').map(function(c){return c.charCodeAt(0);}));
+  var key = await aesKeyFromPassword(password);
+  var pt = await crypto.subtle.decrypt({name:'AES-CBC', iv:u8}, key, ct);
+  return bytesToStr(new Uint8Array(pt));
+}
+
+/* ─── 信号数据（第一关） ─── */
+// Signal 1: Base64 明文（教学层）—— 直接告诉玩家密钥
+var SIG1_PLAIN = 'TWO LAYERS BELOW. KEY ONE: EFSEVENFALL. KEY TWO: SARA. CONFIRM COORDINATES WITH coords <LAT>,<LON>.';
+var SIG1_B64   = b64enc(SIG1_PLAIN);
+
+// Signal 2: Base64 + Vigenère(EFSEVENFALL) → "63.442,-20.273"
+var SIG2_PLAIN = '63.442,-20.273';
+var SIG2_VIG   = vigenere(SIG2_PLAIN, 'EFSEVENFALL', false);
+var SIG2_B64   = b64enc(SIG2_VIG);
+
+// Signal 3（章节 1 入口线索）: Base64 + Vigenère(SARA) → 章节 1 的 URL 与登录提示
+var SIG3_PLAIN = 'CHAPTER01 BEGIN. NEXT: signal_anchor "eastfjord".';
+var SIG3_VIG   = vigenere(SIG3_PLAIN, 'SARA', false);
+var SIG3_B64   = b64enc(SIG3_VIG);
+
+/* ─── 答案验证（哈希比对，不暴露明文） ─── */
+var ANSWERS = {
+  'puzzle-00-001': 'a8b6c1d8e4f4a1b7c3e9d5f2a8b6c1d8e4f4a1b7c3e9d5f2a8b6c1d8e4f4a1b7', // 占位，下面会用真实哈希覆盖
+  'puzzle-00-002': 'TO BE COMPUTED'
+};
+
+// 异步计算真实哈希
+sha256('TWO LAYERS BELOW. KEY ONE: EFSEVENFALL. KEY TWO: SARA. CONFIRM COORDINATES WITH coords <LAT>,<LON>.').then(function(h){
+  ANSWERS['puzzle-00-001'] = h;
+});
+sha256('63.442,-20.273').then(function(h){
+  ANSWERS['puzzle-00-002'] = h;
+});
+
+/* ─── 玩家状态 ─── */
+var state = {
+  solved: {},
+  journal: [],
+  coordsConfirmed: false,
+  introComplete: false
+};
+
+/* ─── 命令 ─── */
+var COMMANDS = {};
+
+COMMANDS.help = function(){
+  println('Commands:', 'hi');
+  [['help',                   '显示本帮助'],
+   ['decode base64 <b64>',   'Base64 解码'],
+   ['decode vigenere <key> <b64>','Vigenère 解密（先 base64 再凯撒式变种）'],
+   ['decode aes <password> <b64>','AES-256-CBC 解密（先 base64 再 AES）'],
+   ['verify <id> <answer>',  '验证谜题答案'],
+   ['coords <lat>,<lon>',    '提交坐标'],
+   ['anchor <word>',         '提交章节信号锚点'],
+   ['signal',                '重放当前接收到的信号'],
+   ['contact',              '打开实时链路（RELAY 正在尝试接入）'],
+   ['chapter',               '列出已解锁章节'],
+   ['chapter <id>',          '切换到章节'],
+   ['journal',               '显示你的发现'],
+   ['log',                   '显示 EF-7 通讯日志片段'],
+   ['history',               '历史信号'],
+   ['clear',                 '清屏'],
+   ['about',                 '关于本终端'],
+   ['exit',                  '退出（页面保持活动，但不再接收新输入）']
+  ].forEach(function(c){
+    println('  <span class="hi">'+c[0].padEnd(38,' ')+'</span><span class="dim">'+c[1]+'</span>');
+  });
+  blank();
+};
+
+COMMANDS.decode = function(args){
+  if(args.length<2) return println('usage: decode &lt;base64|vigenere|aes&gt; ...', 'err');
+  var mode = args[0].toLowerCase();
+  if(mode==='base64'){
+    var s = args.slice(1).join(' ');
+    var r = b64dec(s);
+    if(r===null) return println('invalid base64', 'err');
+    println('→ <span class="hi">'+escapeHTML(r)+'</span>');
+  }
+  else if(mode==='vigenere'){
+    if(args.length<3) return println('usage: decode vigenere &lt;key&gt; &lt;b64-or-text&gt;', 'err');
+    var key = args[1];
+    var blob = args.slice(2).join(' ');
+    var vig = b64dec(blob);
+    if(vig===null){
+      // 不是 base64，当成已解码的密文
+      vig = blob;
+    } else {
+      println('(decoded base64) '+escapeHTML(vig), 'dim');
+    }
+    var pt = vigenere(vig, key, true);
+    println('→ <span class="hi">'+escapeHTML(pt)+'</span>');
+  }
+  else if(mode==='aes'){
+    if(args.length<3) return println('usage: decode aes &lt;password&gt; &lt;b64-with-iv&gt;', 'err');
+    var pw = args[1];
+    var ct = args.slice(2).join(' ').replace(/\s+/g,'');
+    aesDecrypt(pw, ct).then(function(pt){
+      println('→ <span class="hi">'+escapeHTML(pt)+'</span>');
+      scroll();
+    }).catch(function(){
+      println('AES 解密失败（密码错误或密文损坏）', 'err');
+      scroll();
+    });
+    return; // async
+  }
+  else return println('unknown decoder: '+escapeHTML(mode), 'err');
+  blank();
+};
+
+COMMANDS.verify = function(args){
+  if(args.length<2) return println('usage: verify &lt;puzzle-id&gt; &lt;answer&gt;', 'err');
+  var id = args[0];
+  var ans = args.slice(1).join(' ');
+  var expected = ANSWERS[id];
+  if(!expected){
+    println('no such puzzle: '+escapeHTML(id), 'err');
+    return;
+  }
+  if(expected==='TO BE COMPUTED'){
+    println('answer still being computed, try again in a second', 'warn');
+    return;
+  }
+  sha256(ans).then(function(h){
+    if(h===expected){
+      state.solved[id]=true;
+      println('✓ ANSWER ACCEPTED', 'enter');
+      state.journal.push({when:Date.now(), id:id});
+      // 推进剧情
+      if(id==='puzzle-00-001' && !state.coordsConfirmed){
+        println('Hint: <span class="warn">下一条信号使用 Vigenère (key=EFSEVENFALL) + Base64.</span>');
+      }
+      if(id==='puzzle-00-002'){
+        println('Coordinates confirmed. 解锁章节 1 入口.');
+        unlockChapter1();
+      }
+    } else {
+      println('✗ ANSWER REJECTED', 'err');
+    }
+    blank();
+    scroll();
+  });
+};
+
+function unlockChapter1(){
+  try{ localStorage.setItem('ef7.p002','1'); }catch(e){}
+  println('────────────────────────────────────────────────', 'dim');
+  println('CHAPTER 1 UNLOCKED: <span class="hi">Witness List · 失联名单</span>');
+  println('next anchor: <span class="warn">eastfjord</span>', 'warn');
+  println('submit with: <span class="hi">anchor eastfjord</span>', 'dim');
+  println('※ live link: someone is trying to reach this terminal — open <span class="hi">contact.html</span>', 'warn');
+  blank();
+}
+
+COMMANDS.coords = function(args){
+  if(!args.length) return println('usage: coords &lt;lat&gt;,&lt;lon&gt;', 'err');
+  var m = args[0].match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if(!m) return println('invalid coordinate format', 'err');
+  var lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+  // 验证 EF-7 真实位置（冰岛 Heimaey）允许小范围浮动
+  var ok = Math.abs(lat-63.442)<0.5 && Math.abs(lon-(-20.273))<0.5;
+  if(ok){
+    state.coordsConfirmed = true;
+    println('✓ COORDINATES CONFIRMED', 'enter');
+    println('  located at Vestmannaeyjar, Iceland', 'dim');
+    println('  ✓ auto-verified: <span class="hi">puzzle-00-002</span>');
+    state.solved['puzzle-00-002']=true;
+    state.journal.push({when:Date.now(), id:'puzzle-00-002'});
+    unlockChapter1();
+  } else {
+    println('✗ location does not match signal source', 'err');
+    println('  expected ≈ 63.442°, -20.273° (Vestmannaeyjar, Iceland)', 'dim');
+  }
+  blank();
+};
+
+COMMANDS.anchor = function(args){
+  if(!args.length) return println('usage: anchor &lt;word&gt;', 'err');
+  var w = args[0].toLowerCase();
+  if(!state.solved['puzzle-00-002']){
+    println('coordinates not confirmed. run "coords" first.', 'err');
+    return blank();
+  }
+  if(w==='eastfjord'){
+    try{ localStorage.setItem('ef7.anchor1','1'); }catch(e){}
+    println('✓ ANCHOR ACCEPTED', 'enter');
+    println('CHAPTER 1 ready. <span class="warn">journal updated.</span>', 'warn');
+    state.journal.push({when:Date.now(), event:'chapter-1 anchor'});
+    println('&gt; <span class="dim">type <span class="hi">chapter 01_witness</span> to enter chapter 1 (skeleton).</span>');
+  } else {
+    println('✗ ANCHOR UNKNOWN', 'err');
+  }
+  blank();
+};
+
+COMMANDS.signal = function(){
+  println('─── Signal 1 (raw) ─────────────────────────', 'dim');
+  println(SIG1_B64);
+  println('─── Signal 2 (vigenere:EFSEVENFALL+base64) ─', 'dim');
+  println(SIG2_B64);
+  println('─── Signal 3 (vigenere:SARA+base64) ────────', 'dim');
+  println(SIG3_B64);
+  println('hint: <span class="warn">decode base64 001 first.</span>');
+  blank();
+};
+
+COMMANDS.contact = function(){
+  println('opening live link …', 'warn');
+  println('peer: <span class="hi">UNKNOWN / RELAY</span> · trust: <span class="err">unverified</span>', 'dim');
+  println('open <span class="hi">contact.html</span> in this directory.', 'dim');
+  blank();
+};
+
+COMMANDS.chapter = function(args){
+  if(!args.length){
+    println('chapters:', 'hi');
+    println('  00_signal     <span class="'+(state.coordsConfirmed?'enter':'dim')+'">'+(state.coordsConfirmed?'✓ unlocked':'○ pending')+'</span> · Signal Contact');
+    println('  01_witness    <span class="'+(state.journal.some(function(j){return j.event==='chapter-1 anchor';})?'enter':'dim')+'">'+(state.journal.some(function(j){return j.event==='chapter-1 anchor';})?'✓ unlocked':'○ locked')+'</span> · Witness List');
+    println('  02_blackbox   <span class="dim">○ locked</span> · Black Box');
+    println('  03_protocol   <span class="dim">○ locked</span> · Protocol');
+    println('  99_truth      <span class="dim">○ locked</span> · Truth');
+    return blank();
+  }
+  var id = args[0];
+  if(id==='00_signal'){
+    println('&gt; <span class="dim">chapter 00 already active.</span>');
+  } else if(id==='01_witness'){
+    if(!state.journal.some(function(j){return j.event==='chapter-1 anchor';})){
+      println('chapter locked. anchor "eastfjord" first.', 'err');
+    } else {
+      println('chapter 01 not yet implemented in this build.', 'warn');
+      println('see <span class="hi">chapters/01_witness/</span> for skeleton.', 'dim');
+    }
+  } else println('unknown chapter', 'err');
+  blank();
+};
+
+COMMANDS.journal = function(){
+  if(!state.journal.length){ println('(empty)', 'dim'); return blank(); }
+  println('─── JOURNAL ───────────────────────────────', 'dim');
+  state.journal.forEach(function(j,i){
+    var t = new Date(j.when).toISOString().replace('T',' ').substr(0,19);
+    if(j.id) println('  '+t+'  '+j.id+(state.solved[j.id]?' ✓':' ✗'));
+    if(j.event) println('  '+t+'  '+j.event);
+  });
+  blank();
+};
+
+COMMANDS.log = function(){
+  println('EF-7 LOG 2023.06.14 03:42:07Z', 'hi');
+  println('operator: SVE');
+  println('');
+  println('pattern shifted. not 5.7 anymore. it\'s 5.7 again but inverted phase.');
+  println('the index counts. we counted them.');
+  println('91 / 91.');
+  println('ask hk about the lattice.');
+  println('[REDACTED] says it\'s not a signal. it\'s a signature.');
+  println('[REDACTED] — we are all going to be remembered.');
+  println('');
+  println('— end of recovered fragment —', 'dim');
+  blank();
+};
+
+COMMANDS.history = function(){
+  println('signal history:', 'dim');
+  println('  2011.??.??  17-second LF capture (5.7 Hz) — NATO SIGINT');
+  println('  2014.??.??  EF project initiated (NATO + IS + NO)');
+  println('  2019.06.14  EF-7 station online — Vestmannaeyjar, IS');
+  println('  2023.06.14  EF-7 silence. all 7 personnel missing.');
+  println('  2025.04.01  this terminal receives your signal.');
+  blank();
+};
+
+COMMANDS.about = function(){
+  println('EF-7 Terminal · build '+(new Date().toISOString().substr(0,10)), 'dim');
+  println('EDENFALL protocol · client v0.1', 'dim');
+  println('no telemetry. no network. no record except your journal.', 'dim');
+  blank();
+};
+
+COMMANDS.exit = function(){
+  println('terminal closed. signal continues.', 'warn');
+  state.exit = true;
+  blank();
+};
+
+COMMANDS.clear = function(){
+  screen.innerHTML = '';
+};
+
+/* ─── HTML 转义 ─── */
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+/* ─── 主命令分派 ─── */
+function runCommand(raw){
+  var s = raw.trim();
+  println('&gt; <span class="prompt in">'+escapeHTML(s)+'</span>');
+  if(!s) return scroll();
+  var args = s.split(/\s+/);
+  var cmd_ = args.shift().toLowerCase();
+  var fn = COMMANDS[cmd_];
+  if(!fn){ println('unknown command: '+escapeHTML(cmd_), 'err'); blank(); return scroll(); }
+  fn(args);
+  scroll();
+}
+
+cmd.addEventListener('keydown', function(e){
+  if(e.key==='Enter'){
+    e.preventDefault();
+    var v = cmd.value;
+    cmd.value='';
+    if(!state.exit) runCommand(v);
+  }
+  // 保持焦点
+  setTimeout(function(){ cmd.focus(); }, 0);
+});
+
+// 全局点击唤醒焦点
+document.addEventListener('click', function(){ cmd.focus(); });
+
+/* ════════════════════════════════════════════════════════════════
+   启动序列：开机 → 信号接收 → 等待玩家
+   ════════════════════════════════════════════════════════════════ */
+async function boot(){
+  await sleep(400);
+  println('EF-7 TERMINAL v0.1 — initializing…', 'dim');
+  await sleep(250);
+  println('mem check … <span class="hi">ok</span>');
+  await sleep(150);
+  println('crypto module … <span class="hi">loaded</span>');
+  await sleep(150);
+  println('sandbox … <span class="hi">ok</span>');
+  await sleep(200);
+  println('signal interface … <span class="warn">incoming carrier detected</span>');
+  await sleep(350);
+  blank();
+
+  // 信号接收动效
+  println('▓░▓░░▓░▓░░▓░░▓▓░▓░░▓░▓░░▓▓░▓░░▓░░▓░▓░░▓░░', 'dim');
+  await sleep(120); println('▓▓░▓░▓░░▓░▓▓░▓░░▓░░▓▓░▓░▓░░▓░░▓▓░▓░░', 'dim');
+  await sleep(120); println('▓░▓░▓░▓░░▓░░▓▓░▓░░▓░░▓▓░▓░░▓▓░▓░░▓░', 'dim');
+  await sleep(180);
+  blank();
+
+  println('SIGNAL  LOCKED', 'hi');
+  println('source: EF-7 · Vestmannaeyjar, IS', 'dim');
+  println('rx: <span class="warn">2025-04-01T03:42:07Z</span>', 'dim');
+  println('enc: BASE64 · VIGENERE(EFSEVENFALL) · VIGENERE(SARA)', 'dim');
+  println('payload (3 frames):', 'dim');
+  blank();
+  println('<span class="dim">[001]</span> '+SIG1_B64);
+  println('<span class="dim">[002]</span> '+SIG2_B64);
+  println('<span class="dim">[003]</span> '+SIG3_B64);
+  blank();
+  println('type <span class="hi">help</span> for commands.', 'warn');
+  println('type <span class="hi">signal</span> to replay.', 'dim');
+  blank();
+
+  println('<span class="prompt in"><span id="cursor"></span></span>');
+  state.introComplete = true;
+  scroll();
+}
+
+boot();
+
+})();
+</script>
+</body>
+</html>

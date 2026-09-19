@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>MIRROR BBS · Linjiang Middle School</title>
+<style>
+/* ── 终端样式（与 start.html 同源：白色磷光 CRT） ── */
+:root{
+  --bg:#000;
+  --fg:#e0e0e0;
+  --dim:#808080;
+  --warn:#e5c07b;
+  --err:#e06c75;
+  --hi:#ffffff;
+  --relay:#56b6c2;
+  --mono:'Courier New','Consolas','Monaco',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;height:100%;
+  background:#000;
+  color:var(--fg);
+  font-family:var(--mono);
+  font-size:14px;
+  line-height:1.45;
+  overflow:hidden;
+  cursor:text;
+}
+/* CRT 扫描线 + 屏幕轻微抖动 */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0) 2px,
+      rgba(0,0,0,0.18) 3px,
+      rgba(0,0,0,0) 4px
+    );
+  z-index:999;
+}
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%);
+  z-index:998;
+}
+@keyframes jitter{0%{transform:translate(0,0)}25%{transform:translate(-1px,0.5px)}50%{transform:translate(0.5px,-1px)}75%{transform:translate(-0.5px,1px)}100%{transform:translate(0,0)}}
+.crt-screen{ animation:jitter 0.12s steps(2,end) infinite; }
+
+#screen{
+  width:100%;height:100%;
+  padding:18px 22px;
+  overflow-y:auto;
+  white-space:pre-wrap;
+  word-break:break-all;
+  scrollbar-width:thin;
+  scrollbar-color:var(--dim) transparent;
+}
+#screen::-webkit-scrollbar{width:6px}
+#screen::-webkit-scrollbar-thumb{background:var(--dim)}
+
+.line{margin:0;padding:0;min-height:1em}
+.prompt::before{content:'MIRROR> '}
+.dim{color:var(--dim)}
+.warn{color:var(--warn)}
+.err{color:var(--err)}
+.hi{color:var(--hi)}
+.relay{color:var(--relay)}
+.frame{color:var(--dim)}
+.frame .fid{color:var(--relay)}
+
+#cursor{
+  display:inline-block;
+  width:0.6em;height:1em;
+  background:var(--fg);
+  vertical-align:text-bottom;
+  animation:blink 1s steps(2,end) infinite;
+}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+input.cmd{
+  position:fixed;
+  left:-9999px;top:-9999px;
+  opacity:0;
+}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="crt-screen">
+<div id="screen"></div>
+</div>
+<input class="cmd" id="cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" autofocus>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MIRROR BBS — 镜校 · 平行叙事终端
+   设计文档：parallel/DESIGN.md（含虚构/现实边界规则）
+   剧情语言：英文（EF 同款）。学校为虚构，与任何真实学校无关。
+   ════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ─── DOM ─── */
+var screen = document.getElementById('screen');
+var cmd    = document.getElementById('cmd');
+
+/* ─── 工具 ─── */
+function print(html, cls){
+  var line = document.createElement('span');
+  line.className = 'line' + (cls ? ' '+cls : '');
+  if (html === undefined) html = '';
+  line.innerHTML = html;
+  screen.appendChild(line);
+}
+function println(html, cls){
+  print(html, cls);
+  screen.appendChild(document.createElement('br'));
+}
+function blank(){ screen.appendChild(document.createElement('br')); }
+function scroll(){ screen.scrollTop = screen.scrollHeight; }
+async function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+async function sha256(str){
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
+/* ─── 几何常量（m-005 本地验证） ─── */
+var ANCHOR = { lat: 31.207175, lon: 121.493583 };
+var MIRROR_MERIDIAN = 121.5;                        // 镜面：东经 121.5° 经线
+var MIRRORED_LON = 2*MIRROR_MERIDIAN - ANCHOR.lon;  // = 121.506417
+
+/* ─── 片段数据 ───
+   gate: null        = 无门槛
+        'm-001' ...  = 需先通过对应接力                  */
+var FRAGMENTS = [
+  { id:1, ts:'1999.04.17 23:58 · astronomy club archive', gate:null, lines:[
+    'MIRROR BBS auto-responder. duty node online.',
+    'last inbound call: 2003.06.30.',
+    'new terminal detected. per the 1999 protocol, initiating relay notice to the mirror side.',
+    '— what follows is from the duty log.'
+  ]},
+  { id:2, ts:'duty log · excerpt 001', gate:null, lines:[
+    'i am not a person. i am the duty node.',
+    'the 1999 astronomy club scheduled my shift. i have kept it ever since.',
+    'they said they would come back. protocol requires the line stay open until they do.'
+  ]},
+  { id:3, ts:'1999.04.17 · post #0117', gate:null, lines:[
+    'five of us, five relays.',
+    'jupiter takes 11.86 years to circle the sun. they said: when jupiter returns the second time to the place we photographed it, that is the day we open the box.',
+    'the night they photographed it was april 17, 1999.',
+    'the president\'s last post: "we leave it here, and wait for the sky to come back around."'
+  ]},
+  { id:4, ts:'duty log · excerpt 002', gate:null, lines:[
+    'the relays are not at linjiang.',
+    'your school and linjiang are separated by a mirror. every station is on your campus — jupiter, seen from either side of a mirror, is the same jupiter.',
+    'type tasks to see the five relays. finish one, and i will tell one story from 1999.',
+    'submit with: verify <id> <what you observed>.'
+  ]},
+  { id:5, ts:'duty log · excerpt 003', gate:'m-001', lines:[
+    'the step count is correct.',
+    'in 1999 they counted this one too. twice. off by one. they argued about it on the BBS all night.',
+    'tianshu said trust the larger number. yuheng said the smaller. in the end they did what tianji suggested: count it a third time — and whoever produced a third different number was sent to count the flagpole instead.'
+  ]},
+  { id:6, ts:'1999.05.02 · post #0126', gate:'m-002', lines:[
+    'the year this was carved into stone, the observatory was still only a drawing.',
+    'kaiyang always said the oldest building is more honest than the newest blueprint.',
+    'so they set the first calibration on the plaque: when the year matches, the two schools across the mirror are aligned.'
+  ]},
+  { id:7, ts:'1999.10.11 · post #0139', gate:'m-003', lines:[
+    'the shadow did not betray them.',
+    'the flagpole shadow that afternoon lay as straight as the three stars of orion\'s belt on the chart.',
+    'yaoguang said: you don\'t need instruments. you need patience. at the right hour, the ground draws the bearing by itself.'
+  ]},
+  { id:8, ts:'duty log · excerpt 004', gate:'m-004', lines:[
+    'the book is still on its shelf.',
+    'the duty node cannot confirm this. but protocol says: every few years, someone comes and touches it.',
+    'the librarian does not know about this. this bothers no one. they chose the book deliberately — one almost nobody borrows.'
+  ]},
+  { id:9, ts:'1999.04.17 · post #0118', gate:'m-004', lines:[
+    'the last station takes no observing. only arithmetic.',
+    'they left one sentence: "the meridian is the mirror. 121.5 is the glass."',
+    'the anchor is your school\'s coordinates. compute the other side of the glass — linjiang is there.',
+    'submit as <lat>,<lon>. six decimal places.'
+  ]},
+  { id:10, ts:'duty log · excerpt 005', gate:'m-005', lines:[
+    'all five correct.',
+    'per protocol, the duty node must now ask the last question. no answer was written down in 1999. it is to be asked, now, of whoever is at the terminal on the other side:',
+    '"did they come back?"',
+    '(reply with your answer. the duty node will log it.)'
+  ]},
+  { id:11, ts:'1999.04.17 · archived letter (final chapter — opens only when all five relays are complete)', gate:'answered', lines:[
+    'to the next person who counts the steps:',
+    'the box is not valuable. one photographic negative — jupiter, april 17 1999, 42-second exposure, slightly blurred.',
+    'one letter — written to ourselves, twenty-five years on. it is no longer needed.',
+    'and one empty sixth compartment.',
+    'five of us left five slots. the sixth is for whoever finishes this line.',
+    'what goes in it is up to you.',
+    '— tianshu / tianji / yuheng / kaiyang / yaoguang'
+  ]}
+];
+
+/* ─── 持久化 ─── */
+var STORE  = 'mirror.state';
+var ASTORE = 'mirror.answers';
+var state = { read:[], solved:[], answered:false, replies:0, exit:false };
+
+function save(){ try{ localStorage.setItem(STORE, JSON.stringify(state)); }catch(e){} }
+function load(){
+  try{
+    var raw = localStorage.getItem(STORE);
+    if(raw){
+      var s = JSON.parse(raw);
+      state.read = s.read||[]; state.solved = s.solved||[];
+      state.answered = !!s.answered; state.replies = s.replies||0;
+    }
+  }catch(e){}
+}
+function getAnswers(){ try{ return JSON.parse(localStorage.getItem(ASTORE))||{}; }catch(e){ return {}; } }
+function setAnswers(a){ try{ localStorage.setItem(ASTORE, JSON.stringify(a)); }catch(e){} }
+function gateOpen(f){
+  if(!f.gate) return true;
+  if(f.gate==='answered') return state.answered;
+  return state.solved.indexOf(f.gate)!==-1;
+}
+function solved(id){ return state.solved.indexOf(id)!==-1; }
+
+/* ─── 打字机推送 ─── */
+async function typeLine(prefix, text, cls){
+  var span = document.createElement('span');
+  span.className = 'line' + (cls ? ' '+cls : '');
+  span.appendChild(document.createTextNode(prefix));
+  var t = document.createElement('span');
+  if(cls) t.className = cls;
+  span.appendChild(t);
+  screen.appendChild(span);
+  for(var i=0; i<text.length; i+=2){
+    t.textContent = text.slice(0, i+2);
+    scroll();
+    await sleep(28);
+  }
+  t.textContent = text;
+  screen.appendChild(document.createElement('br'));
+}
+
+async function deliver(f, opts){
+  opts = opts || {};
+  if(!opts.silent) await sleep(opts.live ? 600 : 200);
+
+  println('┌─ BBS ARCHIVE ──────────────────────────────', 'frame');
+  println('│ <span class="fid">letter '+pad2(f.id)+'/11</span> · '+escapeHTML(f.ts), 'frame');
+  for(var i=0;i<f.lines.length;i++){
+    await typeLine('│ ', f.lines[i], 'relay');
+  }
+  println('└─────────────────────────────────────────────', 'frame');
+
+  if(state.read.indexOf(f.id)===-1){
+    state.read.push(f.id);
+    save();
+  }
+  scroll();
+}
+
+/* ─── 谜题元数据 ─── */
+var TASKS = {
+  'm-001': { name:'steps', desc:'count the steps from the school gate to the main building (count twice — in 1999 they got two different numbers)', type:'field' },
+  'm-002': { name:'plaque', desc:'the founding year on the plaque of the oldest building on campus (four digits)', type:'field' },
+  'm-003': { name:'shadow', desc:'at the designer-chosen hour: the eight-point compass direction of the flagpole shadow (e.g. "NE")', type:'field' },
+  'm-004': { name:'book',   desc:'the call number of the astronomy book the designer chose (see FIELD_NOTES.md)', type:'field' },
+  'm-005': { name:'mirror', desc:'pure arithmetic: the meridian is the mirror, the glass is 121.5°E; anchor 31.207175,121.493583. compute the mirrored point', type:'math' }
+};
+
+/* ─── 应答系统 ─── */
+var DEFLECT = [
+  ['(the duty node does not chat.)', 'relay'],
+  ['(that keyword is not in the 1999 lexicon.)', 'relay'],
+  ['…', 'relay'],
+  ['(the duty node remains online.)', 'relay']
+];
+var REPLIES = [
+  { re:/who|你是|你是谁|duty node/i, lines:[
+    'the duty node. scheduled in 1999. the handover has not come.'
+  ]},
+  { re:/jupiter|木星/i, lines:[
+    '11.86 years per orbit. the night they photographed it was april 17, 1999.',
+    'per protocol, when jupiter returns the second time to that night\'s position, that is the day to open the box.'
+  ]},
+  { re:/box|匣|盒子/i, lines:[
+    'nothing valuable in the box. they said: what\'s valuable can\'t be carried over.',
+    'five slots for five things. and a sixth, empty.'
+  ]},
+  { re:/1999|club|天文社/i, lines:[
+    'five of them. callsigns: tianshu, tianji, yuheng, kaiyang, yaoguang.',
+    'the president\'s surname was chen. no other names — "callsigns age better than names", they said.'
+  ]},
+  { re:/chen|陈/i, lines:[
+    'the president\'s last post:',
+    '"we leave it here, and wait for the sky to come back around."'
+  ]},
+  { re:/linjiang|mirror|临江|镜子/i, lines:[
+    'the meridian is the mirror. 121.5 is the glass. you are on the other side, under the same sky.',
+    'so your steps, plaques, shadows and shelves all count.'
+  ]}
+];
+
+/* ─── 命令 ─── */
+var COMMANDS = {};
+
+COMMANDS.help = function(){
+  println('MIRROR BBS commands:', 'hi');
+  [['tasks',              'the five relays'],
+   ['verify <id> <answer>','submit an observation'],
+   ['status',             'progress overview'],
+   ['inbox',              'list received archive letters'],
+   ['reread <n>',         're-read a letter'],
+   ['reply <text>',       'speak to the duty node'],
+   ['wait',               'listen for new letters'],
+   ['clear',              'clear screen'],
+   ['about',              'about this station'],
+   ['exit',               'hang up (the line stays open)']
+  ].forEach(function(c){
+    println('  <span class="hi">'+c[0].padEnd(24,' ')+'</span><span class="dim">'+c[1]+'</span>');
+  });
+  blank();
+};
+
+COMMANDS.tasks = function(){
+  println('─── THE FIVE RELAYS ──────────────────────────', 'dim');
+  Object.keys(TASKS).forEach(function(id){
+    var t = TASKS[id];
+    var mark = solved(id) ? '✓' : '○';
+    println('  <span class="hi">'+id+'</span> '+t.name.padEnd(8)+' '+mark+' '+escapeHTML(t.desc));
+  });
+  blank();
+  println('submit: verify <id> <answer>    e.g. verify m-001 48', 'dim');
+  blank();
+};
+
+COMMANDS.status = function(){
+  println('─── PROGRESS ──────────────────────────────────', 'dim');
+  println('  relays: '+state.solved.length+' / 5');
+  println('  archive letters: '+state.read.length+' / '+FRAGMENTS.length);
+  println('  final chapter: '+(state.answered?'✓ open':'locked (needs all five relays + the last question answered)'));
+  blank();
+};
+
+COMMANDS.verify = function(args){
+  if(args.length<2) return println('usage: verify &lt;m-00x&gt; &lt;answer&gt;', 'err');
+  var id = args[0].toLowerCase();
+  var ans = args.slice(1).join(' ').trim();
+
+  if(!TASKS[id]) return println('no such task: '+escapeHTML(id), 'err');
+  if(solved(id))  return println(id+' already complete.', 'dim');
+
+  if(id==='m-005'){
+    var m = ans.match(/^\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*$/);
+    if(!m) return println('format: <lat>,<lon> (six decimals)', 'err');
+    var lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+    var ok = Math.abs(lat-ANCHOR.lat)<1e-4 && Math.abs(lon-MIRRORED_LON)<1e-4;
+    if(ok){
+      passVerify(id, 'mirror point confirmed. linjiang is on the other side of the glass.');
+    } else {
+      println('✗ mirrored point does not match. hint: the meridian is the mirror; latitude does not move.', 'err');
+    }
+    blank(); return scroll();
+  }
+
+  // m-001 ~ m-004：与设计者登记的哈希比对
+  var hashes = getAnswers();
+  if(!hashes[id]){
+    println('no answer registered for this relay.', 'warn');
+    println('designer: use the hidden command to register it — design set '+id+' <answer> (see FIELD_NOTES.md)', 'dim');
+    blank(); return scroll();
+  }
+  sha256(ans).then(function(h){
+    if(h===hashes[id]){
+      passVerify(id, 'observation matches the 1999 records.');
+    } else {
+      println('✗ does not match the records. count it again? they got it wrong the first time too.', 'err');
+    }
+    scroll();
+  });
+};
+
+function passVerify(id, msg){
+  state.solved.push(id);
+  save();
+  println('✓ '+id.toUpperCase()+' PASSED — '+escapeHTML(msg), 'hi');
+  var order = ['m-001','m-002','m-003','m-004','m-005'];
+  var idx = order.indexOf(id);
+  if(idx>=0 && idx<4){
+    println('(the next relay\'s letter is ready to receive: type wait)', 'dim');
+  }
+  if(state.solved.length===5 && !state.answered){
+    blank();
+    println('all five relays complete. the duty node has one last question.', 'warn');
+    println('(type wait to receive it.)', 'dim');
+  }
+  blank();
+}
+
+COMMANDS.inbox = function(){
+  if(!state.read.length){ println('(inbox empty)', 'dim'); return blank(); }
+  println('─── INBOX ─────────────────────────────────────', 'dim');
+  state.read.forEach(function(id){
+    var f = FRAGMENTS[id-1];
+    if(!f) return;
+    var first = f.lines[0].slice(0,34) + (f.lines[0].length>34 ? '…' : '');
+    println('  letter '+pad2(id)+'  <span class="dim">'+f.ts+'</span>  ✓ <span class="relay">'+escapeHTML(first)+'</span>');
+  });
+  println('total: '+state.read.length+' / '+FRAGMENTS.length+' letters on record.', 'dim');
+  blank();
+};
+
+COMMANDS.reread = function(args){
+  if(!args.length) return println('usage: reread &lt;n&gt;', 'err');
+  var n = parseInt(args[0], 10);
+  if(isNaN(n) || n<1 || n>FRAGMENTS.length) return println('no such letter', 'err');
+  if(state.read.indexOf(n)===-1) return println('letter '+pad2(n)+' has not arrived yet.', 'err');
+  deliver(FRAGMENTS[n-1], { silent:true }).then(function(){ blank(); scroll(); });
+};
+
+COMMANDS.reply = function(args){
+  var text = args.join(' ');
+  if(!text) return println('usage: reply &lt;text&gt;', 'err');
+  state.replies++;
+  println('&gt; <span class="hi">'+escapeHTML(text)+'</span>');
+
+  // 终章问题的记录
+  if(state.solved.length===5 && !state.answered &&
+     /come back|came back|returned|yes|no|always|never|回来了|回来|没回来|会|没有|是/i.test(text)){
+    state.answered = true;
+    save();
+    deliverReply(['answer logged.',
+      '(a new line in the duty log. the ink is fresh.)',
+      'per protocol, the handover is complete. the final letter is unlocked — type wait.'], 'relay');
+    return;
+  }
+
+  var lines = null;
+  for(var i=0;i<REPLIES.length;i++){
+    if(REPLIES[i].re.test(text)){ lines = REPLIES[i].lines; break; }
+  }
+  if(!lines){ var d = DEFLECT[state.replies % DEFLECT.length]; lines=[d[0]]; }
+  deliverReply(lines, 'relay');
+};
+
+async function deliverReply(lines, cls){
+  await sleep(500 + Math.random()*600);
+  for(var i=0;i<lines.length;i++){
+    await typeLine('< ', lines[i], cls);
+    await sleep(350);
+  }
+  blank();
+  scroll();
+}
+
+COMMANDS.wait = function(){
+  println('listening for carrier…', 'dim');
+  var dots = 0;
+  var timer = setInterval(function(){ print('.'); dots++; scroll(); }, 400);
+  setTimeout(async function(){
+    clearInterval(timer);
+    while(dots<3){ print('.'); dots++; }
+
+    var fresh = FRAGMENTS.filter(function(f){ return gateOpen(f) && state.read.indexOf(f.id)===-1; });
+    if(!fresh.length){
+      blank();
+      println('duty node online. no new letters.', 'warn');
+      println('(to advance, see tasks.)', 'dim');
+      return blank();
+    }
+    blank();
+    println(fresh.length+' unread letter(s) detected. receiving.', 'hi');
+    blank();
+    for(var i=0;i<fresh.length;i++){
+      await deliver(fresh[i], { live:true });
+    }
+    scroll();
+  }, 1800);
+};
+
+COMMANDS.about = function(){
+  println('MIRROR BBS · duty node v1.0 (built april 1999, unmaintained ever since)', 'dim');
+  println('this station is part of MIRROR, a work of fiction. the school is fictional;', 'dim');
+  println('the observations are real. the two are never mixed.', 'dim');
+  blank();
+};
+
+COMMANDS.exit = function(){
+  println('hung up.', 'warn');
+  println('<span class="relay">(the line stays open. the duty node will keep waiting.)</span>');
+  state.exit = true;
+  blank();
+};
+
+COMMANDS.clear = function(){
+  screen.innerHTML = '';
+  println('<span class="prompt"><span id="cursor"></span></span>');
+};
+
+/* ─── 设计者隐藏命令（不在 help 中） ─── */
+COMMANDS.design = function(args){
+  if(!args.length){
+    println('design set &lt;m-00x&gt; &lt;answer&gt;   register an answer (stored as SHA-256)', 'dim');
+    println('design list                    registered relays', 'dim');
+    println('design reset &lt;m-00x&gt;            clear a registration', 'dim');
+    return blank();
+  }
+  var sub = args[0].toLowerCase();
+  if(sub==='set'){
+    if(args.length<3) return println('usage: design set &lt;m-00x&gt; &lt;answer&gt;', 'err');
+    var id = args[1].toLowerCase();
+    if(!TASKS[id] || id==='m-005') return println('only m-001 ~ m-004 can be registered (m-005 is verified locally by geometry)', 'err');
+    var ans = args.slice(2).join(' ').trim();
+    sha256(ans).then(function(h){
+      var a = getAnswers();
+      a[id] = h;
+      setAnswers(a);
+      println('✓ answer for '+id+' registered (plaintext is not stored).', 'hi');
+      blank(); scroll();
+    });
+    return;
+  }
+  if(sub==='list'){
+    var a = getAnswers();
+    var keys = Object.keys(a);
+    if(!keys.length){ println('(no answers registered yet)', 'dim'); return blank(); }
+    keys.forEach(function(k){ println('  '+k+'  ✓ registered', 'dim'); });
+    return blank();
+  }
+  if(sub==='reset'){
+    if(args.length<2) return println('usage: design reset &lt;m-00x&gt;', 'err');
+    var a = getAnswers();
+    delete a[args[1].toLowerCase()];
+    setAnswers(a);
+    println('cleared.', 'warn');
+    return blank();
+  }
+  println('unknown design subcommand', 'err');
+};
+
+/* ─── 主命令分派 ─── */
+function runCommand(raw){
+  var s = raw.trim();
+  println('&gt; <span class="hi">'+escapeHTML(s)+'</span>');
+  if(!s) return scroll();
+  var args = s.split(/\s+/);
+  var cmd_ = args.shift().toLowerCase();
+  var fn = COMMANDS[cmd_];
+  if(!fn){ println('unknown command: '+escapeHTML(cmd_), 'err'); blank(); return scroll(); }
+  fn(args);
+  scroll();
+}
+
+cmd.addEventListener('keydown', function(e){
+  if(e.key==='Enter'){
+    e.preventDefault();
+    var v = cmd.value;
+    cmd.value='';
+    if(!state.exit) runCommand(v);
+  }
+  setTimeout(function(){ cmd.focus(); }, 0);
+});
+document.addEventListener('click', function(){ cmd.focus(); });
+
+/* ════════════════════════════════════════════════════════════════
+   启动：拨号 → BBS 应答 → 守社人先开口
+   ════════════════════════════════════════════════════════════════ */
+async function boot(){
+  load();
+  await sleep(400);
+  println('dialing MIRROR BBS …', 'dim');
+  await sleep(350);
+  println('carrier … <span class="hi">detected</span>');
+  await sleep(200);
+  println('handshake … <span class="hi">1200bps</span>');
+  await sleep(250);
+  println('node … <span class="warn">linjiang middle school · server room (1999)</span>');
+  await sleep(300);
+  println('duty status … <span class="hi">online (day 9841)</span>');
+  await sleep(350);
+  blank();
+  println('▓░▓░░▓░▓░░▓░░▓▓░▓░░▓░▓░░▓▓░▓░░▓░░▓░▓░░▓░░', 'dim');
+  await sleep(150);
+  println('░▓░▓▓░▓░░▓░▓▓░▓░░▓░░▓▓░▓▓░░▓░░▓▓░▓░░▓░▓░░', 'dim');
+  await sleep(200);
+  blank();
+
+  var fresh = FRAGMENTS.filter(function(f){ return gateOpen(f) && state.read.indexOf(f.id)===-1; });
+  if(!fresh.length && state.read.length){
+    println('duty node online. no new letters.', 'dim');
+    println('inbox: '+state.read.length+' / '+FRAGMENTS.length+'. see status for progress.', 'dim');
+    blank();
+  }
+
+  for(var i=0;i<fresh.length;i++){
+    await deliver(fresh[i], { live:true });
+    blank();
+  }
+
+  println('type <span class="hi">help</span> for commands. type <span class="hi">tasks</span> for the five relays.', 'warn');
+  blank();
+  println('<span class="prompt"><span id="cursor"></span></span>');
+  scroll();
+}
+
+boot();
+
+})();
+</script>
+</body>
+</html>

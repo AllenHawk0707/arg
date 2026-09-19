@@ -1,0 +1,62 @@
+/* EDENFALL · 全章节共享样式（现代终端：白字黑底，无 CRT 特效） */
+:root{
+  --bg:#000;
+  --fg:#e0e0e0;
+  --dim:#808080;
+  --warn:#e5c07b;
+  --err:#e06c75;
+  --hi:#ffffff;
+  --mono:'Courier New','Consolas','Monaco',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;min-height:100%;
+  background:#000;
+  color:var(--fg);
+  font-family:var(--mono);
+  font-size:14px;
+  line-height:1.55;
+}
+/* CRT 扫描线 + 屏幕轻微抖动 */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0) 4px);
+  z-index:999;
+}
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%);
+  z-index:998;
+}
+@keyframes jitter{0%{transform:translate(0,0)}25%{transform:translate(-1px,0.5px)}50%{transform:translate(0.5px,-1px)}75%{transform:translate(-0.5px,1px)}100%{transform:translate(0,0)}}
+.crt-screen{animation:jitter 0.12s steps(2,end) infinite}
+
+.page{padding:48px 60px;max-width:920px;margin:0 auto}
+h1{font-size:32px;color:var(--hi);letter-spacing:6px;margin-bottom:6px}
+h2{font-size:18px;color:var(--fg);letter-spacing:3px;margin-bottom:32px;font-weight:400}
+h3{color:var(--warn);margin-top:24px;font-size:14px;letter-spacing:2px}
+p{margin:12px 0}
+.dim{color:var(--dim)}
+.warn{color:var(--warn)}
+.hi{color:var(--hi)}
+.err{color:var(--err)}
+hr{border:0;border-top:1px dashed var(--dim);margin:24px 0}
+ol,ul{margin:12px 0 12px 24px}
+li{margin:6px 0}
+.kw{color:var(--hi);background:rgba(255,255,255,0.10);padding:1px 6px;border-radius:2px}
+pre{background:rgba(255,255,255,0.04);padding:16px;border:1px solid var(--dim);border-radius:2px;overflow-x:auto;margin:16px 0}
+pre.lore{color:var(--warn)}
+table{border-collapse:collapse;width:100%;margin:24px 0;font-size:13px}
+th{color:var(--warn);text-align:left;padding:8px 12px;border-bottom:1px solid var(--dim);font-weight:normal;letter-spacing:1px}
+td{padding:8px 12px;border-bottom:1px solid rgba(128,128,128,0.35)}
+.status-lost{color:var(--err)}
+.status-found{color:var(--hi)}
+.status-unknown{color:var(--dim)}
+.back{display:inline-block;color:var(--hi);text-decoration:none;padding:6px 14px;border:1px solid var(--dim);border-radius:2px;margin-top:24px;font-size:12px;letter-spacing:1px}
+.back:hover{background:rgba(255,255,255,0.08);border-color:var(--hi)}
+.lock{display:inline-block;padding:8px 16px;border:1px solid var(--err);color:var(--err);border-radius:2px;font-size:12px;letter-spacing:2px;margin-top:16px}
+a{color:var(--hi)}

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>CHAPTER 02 · Black Box · 黑匣子</title>
+<link rel="stylesheet" href="../../chapters.css">
+</head>
+<body>
+<div class="crt-screen page">
+<a class="back" href="../../start.html">&lt; return to terminal</a>
+<h1>CHAPTER 02</h1>
+<h2>Black Box · 黑匣子</h2>
+<p class="dim">Recovered from EF-7 on 2023.06.16. Damaged. Incomplete. Still talking.</p>
+
+<p>The Icelandic Coast Guard recovered a single flight-data-recorder-style device from EF-7. It was not an FDR. It was a custom black box built by Per-Olof Larsson. The lid reads:</p>
+<pre class="lore">
+       ╔══════════════════════════════════╗
+       ║  EF-7 SIGNAL ARCHIVE             ║
+       ║  type: POL-2 (custom)            ║
+       ║  channels: 5                     ║
+       ║  retention: 10 years             ║
+       ║  --------------------------------║
+       ║  recovered: 2023.06.16           ║
+       ║  status: PARTIAL · 1 TB INTACT   ║
+       ║             · 0.3 TB CORRUPTED   ║
+       ╚══════════════════════════════════╝
+</pre>
+
+<hr>
+
+<h3>章节核心</h3>
+
+<p>黑匣子里有 5 个独立通道的录音：</p>
+<ol>
+  <li><b>channel 1</b> — EF-7 控制室的环境音（5.7 Hz 共振被多次触发）</li>
+  <li><b>channel 2</b> — Helgi Freyr 私人话筒（他最后一次调试发射机时的自言自语）</li>
+  <li><b>channel 3</b> — 一段来自不明方向的外部音频（被 POL-2 截获）</li>
+  <li><b>channel 4</b> — 档案室（Jóhanna 在整理最后一批档案）</li>
+  <li><b>channel 5</b> — 失联后第 7 天的静默被一次 17 秒 5.7 Hz 突发打断</li>
+</ol>
+
+<hr>
+
+<h3>WANTED — 谜题链</h3>
+
+<ul>
+  <li><span class="kw">puzzle-02-001</span> — channel 3 频谱中藏莫尔斯码 → 翻译得 "WE ARE NOT / WE ARE ECHO" 重复 91 次（频谱分析：Audacity）</li>
+  <li><span class="kw">puzzle-02-002</span> — channel 5 的 17 秒突发 → AES-256-CBC 密文 → 密码来自 Per-Olof 的名字（瑞典语变体）</li>
+  <li><span class="kw">puzzle-02-003</span> — Jóhanna 在档案室整理的最后一份档案 → 一份加密邮件 → 章节 3 的入口</li>
+</ul>
+
+<p class="dim">↳ 桥接：<span class="kw">bridge-02-001</span> archive.org/details/ef7-day12（fallback: archive/transmissions/EF7_day12.wav）</p>
+
+<p class="warn">本章节最低要求：玩家需要 Audacity / SoX 进行频谱分析。<br>
+建议同时具备 91 个 0.17 Hz 间距的尖峰识别能力（这是章节 0 的延续）。</p>
+
+<hr>
+
+<p class="lock">⚠ CHAPTER 3 LOCKED — 还原 6.14 那天</p>
+
+<a class="back" href="../../start.html">&gt; open terminal</a>
+</div>
+</body>
+</html>

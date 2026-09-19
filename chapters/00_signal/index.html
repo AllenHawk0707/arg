@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>CHAPTER 00 · Signal Contact</title>
+<link rel="stylesheet" href="../../chapters.css">
+</head>
+<body>
+<div class="crt-screen page">
+<a class="back" href="../../start.html">&lt; return to terminal</a>
+<h1>CHAPTER 00</h1>
+<h2>Signal Contact</h2>
+<p class="dim">2025-04-01 03:42:07 UTC. your terminal receives the signal.</p>
+
+<p>This chapter is the entry point of EF-7. You are the protocol analyst.</p>
+<p>The signal you receive contains three Base64-encoded frames.</p>
+<p>Your task is to extract the coordinates of the EF-7 station.</p>
+
+<hr>
+
+<p>To begin, return to the terminal and decode:</p>
+<ol>
+  <li><span class="kw">decode base64 [signal-001]</span> — recover the encryption keys</li>
+  <li><span class="kw">decode base64 [signal-002]</span>, then <span class="kw">decode vigenere EFSEVENFALL [result]</span> — coordinates</li>
+  <li><span class="kw">coords 63.442,-20.273</span> — confirm EF-7 location (Vestmannaeyjar, Iceland)</li>
+</ol>
+
+<hr>
+
+<p class="dim">Lore preview:</p>
+<pre class="lore">
+operator: SVE
+note:
+  pattern shifted. not 5.7 anymore. it's 5.7 again but inverted phase.
+  the index counts. we counted them.
+  91 / 91.
+  ask hk about the lattice.
+  [REDACTED] says it's not a signal. it's a signature.
+  [REDACTED] — we are all going to be remembered.
+end.
+</pre>
+
+<a class="back" href="../../start.html">&gt; open terminal</a>
+</div>
+</body>
+</html>

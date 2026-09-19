@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>LIVE LINK · RELAY</title>
+<style>
+/* ── 终端样式（与 start.html 同源：现代终端，无 CRT 特效） ── */
+:root{
+  --bg:#000;
+  --fg:#e0e0e0;
+  --dim:#808080;
+  --warn:#e5c07b;
+  --err:#e06c75;
+  --hi:#ffffff;
+  --relay:#56b6c2;
+  --mono:'Courier New','Consolas','Monaco',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100%;height:100%;
+  background:#000;
+  color:var(--fg);
+  font-family:var(--mono);
+  font-size:14px;
+  line-height:1.45;
+  overflow:hidden;
+  cursor:text;
+}
+/* CRT 扫描线 + 屏幕轻微抖动 */
+body::before{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0) 2px,
+      rgba(0,0,0,0.18) 3px,
+      rgba(0,0,0,0) 4px
+    );
+  z-index:999;
+}
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%);
+  z-index:998;
+}
+@keyframes jitter{0%{transform:translate(0,0)}25%{transform:translate(-1px,0.5px)}50%{transform:translate(0.5px,-1px)}75%{transform:translate(-0.5px,1px)}100%{transform:translate(0,0)}}
+.crt-screen{ animation:jitter 0.12s steps(2,end) infinite; }
+
+#screen{
+  width:100%;height:100%;
+  padding:18px 22px;
+  overflow-y:auto;
+  white-space:pre-wrap;
+  word-break:break-all;
+  scrollbar-width:thin;
+  scrollbar-color:var(--dim) transparent;
+}
+#screen::-webkit-scrollbar{width:6px}
+#screen::-webkit-scrollbar-thumb{background:var(--dim)}
+
+.line{margin:0;padding:0;min-height:1em}
+.prompt::before{content:'E:\\ARG> '}
+.dim{color:var(--dim)}
+.warn{color:var(--warn)}
+.err{color:var(--err)}
+.hi{color:var(--hi)}
+.relay{color:var(--relay)}
+.frame{color:var(--dim)}
+.frame .fid{color:var(--relay)}
+
+#cursor{
+  display:inline-block;
+  width:0.6em;height:1em;
+  background:var(--fg);
+  vertical-align:text-bottom;
+  animation:blink 1s steps(2,end) infinite;
+}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+input.cmd{
+  position:fixed;
+  left:-9999px;top:-9999px;
+  opacity:0;
+}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="crt-screen">
+<div id="screen"></div>
+</div>
+<input class="cmd" id="cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" autofocus>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   LIVE LINK · RELAY — 片段式剧情终端
+   设计文档：docs/FRAGMENT_DESIGN.md（剧透，玩家禁读）
+   ════════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ─── DOM ─── */
+var screen = document.getElementById('screen');
+var cmd    = document.getElementById('cmd');
+
+/* ─── 工具 ─── */
+function print(html, cls){
+  var line = document.createElement('span');
+  line.className = 'line' + (cls ? ' '+cls : '');
+  if (html === undefined) html = '';
+  line.innerHTML = html;
+  screen.appendChild(line);
+}
+function println(html, cls){
+  print(html, cls);
+  screen.appendChild(document.createElement('br'));
+}
+function blank(){ screen.appendChild(document.createElement('br')); }
+function scroll(){ screen.scrollTop = screen.scrollHeight; }
+async function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+function pad3(n){ return String(n).padStart(3,'0'); }
+
+/* ─── 确定性损坏（同一片段每次显示的遮挡位置一致） ─── */
+function corruptText(text, seed){
+  var r = seed*7919+11;
+  function rnd(){ r=(r*1103515245+12345)%2147483648; return r/2147483648; }
+  var out='';
+  for(var i=0;i<text.length;i++){
+    var ch=text[i];
+    out += (ch!==' ' && rnd()<0.30) ? '█' : ch;
+  }
+  return out;
+}
+
+/* ─── 片段数据 ───
+   gate: null = 无门槛
+        'p002'   = 主终端 coords 已确认
+        'anchor1'= 主终端 anchor eastfjord 已接受            */
+var FRAGMENTS = [
+  { id:1, ts:'2025.04.11 02:14', gate:null, corrupt:false, lines:[
+    'you found the terminal. good.',
+    'keep it open. i only get one channel, and it\'s this one.'
+  ]},
+  { id:2, ts:'2025.04.11 02:19', gate:null, corrupt:false, lines:[
+    'i can\'t tell you who i am. not yet. that\'s not how this works.',
+    'call me RELAY. a relay passes a signal. it doesn\'t originate one.'
+  ]},
+  { id:3, ts:'2025.04.11 02:25', gate:null, corrupt:true, lines:[
+    'the station wasn\'t empty when the coast guard boarded it.',
+    'the milk was cold. the machines were warm. the log was wiped.',
+    'people who vanish don\'t wipe their own logs. people who leave messages do.'
+  ]},
+  { id:4, ts:'2025.04.11 02:31', gate:null, corrupt:false, lines:[
+    'seven names. you will learn all seven before this is over.',
+    'start with the one who drew the black star.'
+  ]},
+  { id:5, ts:'2025.04.11 02:33', gate:null, corrupt:false, lines:[
+    'sara magnusdottir. signal analyst. mother.',
+    'her daughter, eight years old, mailed a drawing to the island.',
+    'a black star with too many points.',
+    'the drawing never arrived. the station received it anyway.'
+  ]},
+  { id:6, ts:'2025.04.11 02:40', gate:null, corrupt:false, lines:[
+    'i can\'t say more over an unconfirmed link.',
+    'confirm the coordinates in the other terminal, then come back and type wait.'
+  ]},
+
+  { id:7, ts:'2025.04.12 01:02', gate:'p002', corrupt:false, lines:[
+    '63.442, -20.273. confirmed. good analyst.',
+    'now the names.'
+  ]},
+  { id:8, ts:'2025.04.12 01:05', gate:'p002', corrupt:false, lines:[
+    'helgi freyr. engineer. the only one who could keep EF-7 honest.',
+    'on the last night he recalibrated the array to listen backwards.',
+    'he never logged why. helgi logged everything. remember that.'
+  ]},
+  { id:9, ts:'2025.04.12 01:11', gate:'p002', corrupt:false, lines:[
+    'jöhan-- [carrier slip]',
+    'jbh. archivist. she kept two sets of records.',
+    'one for nato. one for herself.',
+    'you are looking for the second set. so is someone else.'
+  ]},
+  { id:10, ts:'2025.04.12 01:18', gate:'p002', corrupt:false, lines:[
+    'tómas þór. communications. he believed it was an attempt.',
+    'not a message. an attempt to speak back.',
+    'he was the only one on that island who wasn\'t afraid. that should worry you.'
+  ]},
+  { id:11, ts:'2025.04.12 01:26', gate:'p002', corrupt:false, lines:[
+    'aníta sveinsdóttir. observer. she walked north.',
+    'two hundred meters past the station, into nothing, alone, at 22:40 local.',
+    'her compass was found in her drawer later, pointing 4 degrees off true north.',
+    'true north doesn\'t move. draw the line yourself.'
+  ]},
+  { id:12, ts:'2025.04.12 01:33', gate:'p002', corrupt:false, lines:[
+    'per-olof larsson. visiting researcher. swedish. outsider.',
+    'he kept a private diary, encrypted. it never left the island, because it never existed on paper.',
+    'find it. it opens the third chapter.'
+  ]},
+  { id:13, ts:'2025.04.12 01:47', gate:'p002', corrupt:false, lines:[
+    'asgeir vatnsdal. station lead. he signed the final log at 03:42:07.',
+    'but the operator line reads SVE.',
+    'someone finished the log. or someone finished the station.'
+  ]},
+
+  { id:14, ts:'2023.06.13 22:01 · src EF-7 (relayed)', gate:'anchor1', corrupt:true, lines:[
+    'i found this in the carrier noise. it is not mine. it is theirs.',
+    '[2023.06.13 22:01] sara says the pattern is a lattice, not a sequence.',
+    'hk was right. 91 slots. we have filled 90.',
+    'one left. the station is very quiet tonight.'
+  ]},
+  { id:15, ts:'2025.04.12 03:03', gate:'anchor1', corrupt:false, lines:[
+    'i was on the ferry from landeyjahöfn on june 16.',
+    'i watched them carry the boxes off the island. i counted seven.',
+    'the coast guard report says they carried out none.',
+    'one of us is wrong. i don\'t think it\'s me.'
+  ]},
+  { id:16, ts:'2025.04.12 03:11', gate:'anchor1', corrupt:false, lines:[
+    'that\'s all i can push through tonight. the carrier drops when i talk too long.',
+    'keep your journal. trust the milk, not the report.',
+    '— R.'
+  ]}
+];
+
+/* ─── 持久化 ─── */
+var STORE = 'ef7.contact';
+var state = { read:[], fixed:[], replies:0, exit:false };
+
+function save(){ try{ localStorage.setItem(STORE, JSON.stringify(state)); }catch(e){} }
+function load(){
+  try{
+    var raw = localStorage.getItem(STORE);
+    if(raw){ var s = JSON.parse(raw); state.read = s.read||[]; state.fixed = s.fixed||[]; state.replies = s.replies||0; }
+  }catch(e){}
+}
+function flags(){
+  try{
+    return {
+      p002:    localStorage.getItem('ef7.p002')   === '1',
+      anchor1: localStorage.getItem('ef7.anchor1') === '1'
+    };
+  }catch(e){ return { p002:false, anchor1:false }; }
+}
+function gateOpen(f){
+  if(!f.gate) return true;
+  var g = flags();
+  return f.gate==='p002' ? g.p002 : g.anchor1;
+}
+
+/* ─── 打字机推送 ─── */
+async function typeLine(prefix, text, cls){
+  var span = document.createElement('span');
+  span.className = 'line' + (cls ? ' '+cls : '');
+  span.appendChild(document.createTextNode(prefix));
+  var t = document.createElement('span');
+  if(cls) t.className = cls;
+  span.appendChild(t);
+  screen.appendChild(span);
+  for(var i=0; i<text.length; i+=2){
+    t.textContent = text.slice(0, i+2);
+    scroll();
+    await sleep(28);
+  }
+  t.textContent = text;
+  screen.appendChild(document.createElement('br'));
+}
+
+async function deliver(f, opts){
+  opts = opts || {};
+  if(!opts.silent) await sleep(opts.live ? 600 : 200);
+
+  println('┌─ INCOMING ────────────────────────────────', 'frame');
+  println('│ <span class="fid">F-'+pad3(f.id)+'</span> · '+escapeHTML(f.ts), 'frame');
+
+  for(var i=0;i<f.lines.length;i++){
+    var text = f.lines[i];
+    if(f.corrupt && state.fixed.indexOf(f.id)===-1) text = corruptText(text, f.id*100+i);
+    await typeLine('│ ', text, 'relay');
+  }
+
+  println('└────────────────────────────────────────────', 'frame');
+
+  if(f.corrupt && state.fixed.indexOf(f.id)===-1){
+    println('  <span class="warn">fragment damaged in transit — reread '+f.id+' to re-sync.</span>', 'dim');
+  }
+
+  if(state.read.indexOf(f.id)===-1){
+    state.read.push(f.id);
+    save();
+  }
+  scroll();
+}
+
+/* ─── 应答系统 ─── */
+var DEFLECT = [
+  ['the carrier won\'t carry that.', 'relay'],
+  ['say something useful. or just listen.', 'relay'],
+  ['...', 'relay'],
+  ['not tonight.', 'relay']
+];
+var REPLIES = [
+  { re:/who|你是|你是谁|identity/i, lines:[
+    'not yet. names first. mine last.'
+  ]},
+  { re:/relay|\br\.?\b/i, lines:[
+    'a relay passes signal. it doesn\'t originate it. stop asking.'
+  ]},
+  { re:/sara|magnusdottir|black.?star|黑星/i, lines:[
+    'look at the drawing again. count the points.',
+    'one of them is not a star.'
+  ]},
+  { re:/91|lattice|符号/i, lines:[
+    '91 = 7 × 13. seven researchers. don\'t do numerology.',
+    'do the math.'
+  ]},
+  { re:/anita|aníta|compass|指南针|north|北/i, lines:[
+    '4 degrees over 200 meters is about 14 meters of drift.',
+    'where does the line end?'
+  ]},
+  { re:/ferry|boxes|箱子|渡轮/i, lines:[
+    'i counted them twice. i was sober.',
+    'that\'s all i\'ll say about the ferry.'
+  ]},
+  { re:/milk|牛奶/i, lines:[
+    'the milk was still within its date. everything else about that station was a lie.',
+    'start with what can\'t lie. physics. paper. milk.'
+  ]},
+  { re:/diary|日记|per.?olof|larsson/i, lines:[
+    'his diary never existed on paper. look where nothing is written.',
+    'that\'s a hint. it\'s the only one you get from me tonight.'
+  ]}
+];
+function replyIndexFor(text){
+  for(var i=0;i<REPLIES.length;i++){
+    if(REPLIES[i].re.test(text)) return i;
+  }
+  return -1;
+}
+
+/* ─── 命令 ─── */
+var COMMANDS = {};
+
+COMMANDS.help = function(){
+  println('live link commands:', 'hi');
+  [['inbox',            '列出已收到的片段'],
+   ['reread <n>',       '重读片段（损坏片段将被重新同步）'],
+   ['reply <text>',     '向 RELAY 发话'],
+   ['wait',             '监听载波，等待新片段'],
+   ['clear',            '清屏'],
+   ['about',            '关于本链路'],
+   ['exit',             '断开（页面保持，RELAY 不会离开）']
+  ].forEach(function(c){
+    println('  <span class="hi">'+c[0].padEnd(22,' ')+'</span><span class="dim">'+c[1]+'</span>');
+  });
+  blank();
+};
+
+COMMANDS.inbox = function(){
+  if(!state.read.length){ println('(inbox empty)', 'dim'); return blank(); }
+  println('─── INBOX ───────────────────────────────────', 'dim');
+  state.read.forEach(function(id){
+    var f = FRAGMENTS[id-1];
+    if(!f) return;
+    var first = f.lines[0].slice(0,34) + (f.lines[0].length>34 ? '…' : '');
+    var mark = (f.corrupt && state.fixed.indexOf(id)===-1) ? '█' : '✓';
+    println('  F-'+pad3(id)+'  <span class="dim">'+f.ts+'</span>  '+mark+' <span class="relay">'+escapeHTML(first)+'</span>');
+  });
+  println('total: '+state.read.length+' / '+FRAGMENTS.length+' fragments on record.', 'dim');
+  blank();
+};
+
+COMMANDS.reread = function(args){
+  if(!args.length) return println('usage: reread &lt;n&gt;', 'err');
+  var n = parseInt(args[0], 10);
+  if(isNaN(n) || n<1 || n>FRAGMENTS.length) return println('no such fragment', 'err');
+  var f = FRAGMENTS[n-1];
+  if(state.read.indexOf(n)===-1) return println('F-'+pad3(n)+' is not in your inbox yet.', 'err');
+
+  var wasCorrupt = f.corrupt && state.fixed.indexOf(n)===-1;
+  if(wasCorrupt){
+    // 重同步：先标记修复，deliver 即输出明文
+    state.fixed.push(n);
+    save();
+  }
+
+  deliver(f, { silent:true, live:false }).then(function(){
+    if(wasCorrupt){
+      println('  <span class="warn">carrier re-synchronized. text restored.</span>', 'dim');
+    }
+    blank();
+    scroll();
+  });
+};
+
+COMMANDS.reply = function(args){
+  var text = args.join(' ');
+  if(!text) return println('usage: reply &lt;text&gt;', 'err');
+  state.replies++;
+  save();
+
+  deliverReply(text);
+};
+
+async function deliverReply(text){
+  println('&gt; <span class="hi">'+escapeHTML(text)+'</span>');
+  await sleep(500 + Math.random()*600);
+
+  var idx = replyIndexFor(text);
+  var lines, cls;
+  if(idx>=0){ lines = REPLIES[idx].lines; cls='relay'; }
+  else { var d = DEFLECT[state.replies % DEFLECT.length]; lines=[d[0]]; cls=d[1]; }
+
+  for(var i=0;i<lines.length;i++){
+    await typeLine('< ', lines[i], cls);
+    await sleep(350);
+  }
+  blank();
+  scroll();
+}
+
+COMMANDS.wait = function(){
+  println('listening for carrier…', 'dim');
+  var dots = 0;
+  var timer = setInterval(function(){ print('.'); dots++; scroll(); }, 400);
+
+  setTimeout(async function(){
+    clearInterval(timer);
+    while(dots<3){ print('.'); dots++; }
+
+    var fresh = FRAGMENTS.filter(function(f){ return gateOpen(f) && state.read.indexOf(f.id)===-1; });
+    if(!fresh.length){
+      blank();
+      println('carrier silent. nothing new.', 'warn');
+      println('RELAY speaks when you have earned the next piece.', 'dim');
+      return blank();
+    }
+    blank();
+    println('carrier established. '+fresh.length+' fragment(s) incoming.', 'hi');
+    blank();
+    for(var i=0;i<fresh.length;i++){
+      await deliver(fresh[i], { live:true });
+    }
+    scroll();
+  }, 1800);
+};
+
+COMMANDS.about = function(){
+  println('LIVE LINK v0.1 · carrier-shift relay', 'dim');
+  println('no telemetry. no network. the relay sees only what you type here.', 'dim');
+  blank();
+};
+
+COMMANDS.exit = function(){
+  println('link closed by you.', 'warn');
+  println('<span class="relay">the relay stays on the line. it always does.</span>');
+  state.exit = true;
+  blank();
+};
+
+COMMANDS.clear = function(){
+  screen.innerHTML = '';
+  println('<span class="prompt"><span id="cursor"></span></span>');
+};
+
+/* ─── 主命令分派 ─── */
+function runCommand(raw){
+  var s = raw.trim();
+  println('&gt; <span class="hi">'+escapeHTML(s)+'</span>');
+  if(!s) return scroll();
+  var args = s.split(/\s+/);
+  var cmd_ = args.shift().toLowerCase();
+  var fn = COMMANDS[cmd_];
+  if(!fn){ println('unknown command: '+escapeHTML(cmd_), 'err'); blank(); return scroll(); }
+  fn(args);
+  scroll();
+}
+
+cmd.addEventListener('keydown', function(e){
+  if(e.key==='Enter'){
+    e.preventDefault();
+    var v = cmd.value;
+    cmd.value='';
+    if(!state.exit) runCommand(v);
+  }
+  setTimeout(function(){ cmd.focus(); }, 0);
+});
+document.addEventListener('click', function(){ cmd.focus(); });
+
+/* ════════════════════════════════════════════════════════════════
+   启动：载波接入 → RELAY 先开口 → 投递未读片段
+   ════════════════════════════════════════════════════════════════ */
+async function boot(){
+  load();
+  await sleep(400);
+  println('LIVE LINK — establishing carrier…', 'dim');
+  await sleep(300);
+  println('handshake … <span class="hi">ok</span>');
+  await sleep(200);
+  println('peer … <span class="warn">UNKNOWN / RELAY</span>');
+  await sleep(200);
+  println('trust … <span class="err">unverified</span>');
+  await sleep(350);
+  blank();
+  println('▓░▓░░▓░▓░░▓░░▓▓░▓░░▓░▓░░▓▓░▓░░▓░░▓░▓░░▓░░', 'dim');
+  await sleep(150);
+  println('░▓░▓▓░▓░░▓░▓▓░▓░░▓░░▓▓░▓▓░░▓░░▓▓░▓░░▓░▓░░', 'dim');
+  await sleep(200);
+  blank();
+
+  var fresh = FRAGMENTS.filter(function(f){ return gateOpen(f) && state.read.indexOf(f.id)===-1; });
+  if(!fresh.length && state.read.length){
+    println('carrier present. no new fragments.', 'dim');
+    println('inbox: '+state.read.length+' / '+FRAGMENTS.length+'. type <span class="hi">wait</span> after progress.', 'dim');
+    blank();
+  }
+
+  for(var i=0;i<fresh.length;i++){
+    await deliver(fresh[i], { live:true });
+    blank();
+  }
+
+  println('type <span class="hi">help</span> for live link commands.', 'warn');
+  blank();
+  println('<span class="prompt"><span id="cursor"></span></span>');
+  scroll();
+}
+
+boot();
+
+})();
+</script>
+</body>
+</html>
